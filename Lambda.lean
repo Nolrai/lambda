@@ -1,8 +1,11 @@
 import Std
+import Lean
 
-structure Name where
-  (str : String)
-  (subscript : Nat)
+open Std
+
+abbrev Name := String × Nat
+abbrev Name.str (x : Name) := x.1
+abbrev Name.subscript (x : Name) := x.2
 
 abbrev Ctx := List Name
 
@@ -11,14 +14,36 @@ def main : IO UInt32 := do
   IO.println "world"
   return 0
 
-def getFresh (name : Name) (ctx : Ctx) : IO Name := do
-  let mut sofar := name
-  for x in ctx do
-    if x.str = sofar.str ∧ x.subscript ≥ sofar.subscript then
-      sofar := {sofar with subscript := x.subscript + 1}
-  return sofar
+def getFresh (name : Name) : Ctx → Name
+  | [] => name
+  | x :: xs => 
+    if x.str = name.str
+      then ⟨name.str, max (getFresh name xs).subscript (x.subscript + 1)⟩
+      else name
 
-abbrev PosIn (name : α) (ctx : List α) := {n // ctx.get n = name}
+theorem lt_max (x y z : α) [LT α] [DecidableRel (@LT.lt α _)] : x < y ∨ x < z → x < max y z
+  | Or.inl x_lt_y =>
+    if h : z < y
+      then by
+        simp [max]
+        rw [if_pos h]
+        exact x_lt_y
+      else by
+        simp [max]
+        rw [if_neg h]
+        
+
+theorem getFreshIsFresh_aux x : 
+  ∀ (l : List Name) (y), y ∈ l → y.str = x.str → y.subscript < (getFresh x l).subscript :=
+  λ l y y_in str_eq =>
+    by
+    cases y_in
+    case head l =>
+    simp [getFresh]
+    rw [if_pos]
+    simp [Name.subscript]
+    apply lt_max
+    apply getFreshIsFresh_aux x l y 
 
 theorem List.get_map_aux (f : α → β) (a : α) : ∀ (n : Nat) (ctx : List α) (p : _), 
   ∃ q, (ctx.map f).get ⟨n, p⟩ = f (ctx.get ⟨n, q⟩)
@@ -35,6 +60,8 @@ theorem List.get_map_aux (f : α → β) (a : α) : ∀ (n : Nat) (ctx : List α
       have n_lt : n < length (map f xs) := Nat.lt_of_succ_lt_succ p
       have ⟨q', h'⟩ := get_map_aux f a n xs n_lt
       rw [h']
+
+abbrev PosIn x (xs : List α) := {n // xs.get n = x}
 
 def List.PosIn_map {name : α} {ctx : List α} {f : α → β} : PosIn name ctx → PosIn (f name) (ctx.map f)
   | {val := val, property := prop} =>
@@ -100,9 +127,52 @@ theorem List.mem_map_iff (f : α → β) (a : β) (l : List α) : a ∈ l.map f 
         rw [xs_ih]
         exists b
     
-def dumbRename (f : Name → Name) (injective_f : ∀ x y, f x = f y → x = y) : Lambda ctx → Lambda (ctx.map f)
+def rename_aux (dont_change : List Name) : Name → Name
+  | name =>
+    if name ∈ dont_change
+      then name
+      else (getFresh name (name :: dont_change))
+
+def getDecidable (P : Prop) [Decidable P] : Decidable P :=
+  if h : P
+    then isTrue h
+    else isFalse h
+
+theorem rename_aux_injective (dont_change : List Name) :
+  ∀ x y, rename_aux dont_change x = rename_aux dont_change y → x = y :=
+  λ x y h =>
+  by
+    simp [rename_aux] at h
+    match getDecidable (x ∈ dont_change), getDecidable (y ∈ dont_change) with
+    | isTrue x_in, isTrue y_in => 
+      rw [if_pos, if_pos] at h
+      exact h 
+      case hc => exact y_in
+      case hc => exact x_in 
+    | isTrue x_in, isFalse y_in => 
+      rw [if_pos, if_neg] at h
+      
+
+    | isFalse x_in, isTrue y_in => _ 
+      rw [if_pos, if_pos] at h
+      exact h 
+    | isFalse x_in, isFalse y_in => _ 
+      rw [if_pos, if_pos] at h
+      exact h 
+
+def rename (f : Name → Name) (injective_f : ∀ x y, f x = f y → x = y) : Lambda ctx → Lambda (ctx.map f)
   | Var name pos => Var (f name) (ctx.PosIn_map pos)
-  | App callee argument => App (dumbRename f injective_f callee) (dumbRename f injective_f argument)
-  | Abs name body p => Abs (f name) (dumbRename f injective_f body) $
+  | App callee argument => App (rename f injective_f callee) (rename f injective_f argument)
+  | Abs name body p => Abs (f name) (rename f injective_f body) $
     by
     rw [List.mem_map_iff f (f name)]
+    intros h
+    apply p
+    have ⟨b, b_in_ctx, f_name_eq_f_b⟩ := h
+    rw [injective_f _ _ f_name_eq_f_b]
+    exact b_in_ctx
+
+
+  
+
+  
