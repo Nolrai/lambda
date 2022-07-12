@@ -19,31 +19,90 @@ def getFresh (name : Name) : Ctx → Name
   | x :: xs => 
     if x.str = name.str
       then ⟨name.str, max (getFresh name xs).subscript (x.subscript + 1)⟩
-      else name
+      else getFresh name xs
 
-theorem lt_max (x y z : α) [LT α] [DecidableRel (@LT.lt α _)] : x < y ∨ x < z → x < max y z
-  | Or.inl x_lt_y =>
-    if h : z < y
-      then by
-        simp [max]
-        rw [if_pos h]
-        exact x_lt_y
-      else by
-        simp [max]
-        rw [if_neg h]
+theorem max_zero : ∀ (x : Nat), max x 0 = x
+  | 0 => by 
+    simp [max]
+  | n + 1 => by
+    simp [max]
+    rw [if_pos]
+    apply Nat.zero_lt_succ
+
+theorem zero_max : ∀ (x : Nat), max 0 x = x
+  | 0 => by 
+    simp [max]
+  | n + 1 => by
+    simp [max]
+    rw [if_neg]
+    apply Nat.not_lt_zero (n + 1)
+
+theorem succ_max_succ : ∀ x y : Nat, max (x + 1) (y + 1) = (max x y) + 1 :=
+  fun x y =>
+  if h : y < x
+    then by
+      simp [max]
+      rw [if_pos (Nat.succ_lt_succ h), if_pos h]
+    else by
+      simp [max]
+      rw [if_neg, if_neg h]
+      intros h'
+      apply h
+      apply Nat.lt_of_succ_lt_succ h'
+
+theorem lt_max_left (x y z : Nat) (lt_left : x < y) : x < max y z :=
+  if h : z < y
+    then by
+      simp [max]
+      rw [if_pos h]
+      assumption
+    else by
+      simp [max]
+      rw [if_neg h]
+      apply Nat.lt_of_lt_of_le lt_left
+      rw [← Nat.not_lt_eq]
+      exact h
+    
+theorem lt_max_right (x y z : Nat) (lt_right : x < z) : x < max y z :=
+  if h : z < y
+    then by
+      simp [max]
+      rw [if_pos h]
+      apply Nat.lt_trans lt_right h
+    else by
+      simp [max]
+      rw [if_neg h]
+      exact lt_right
         
-
 theorem getFreshIsFresh_aux x : 
   ∀ (l : List Name) (y), y ∈ l → y.str = x.str → y.subscript < (getFresh x l).subscript :=
   λ l y y_in str_eq =>
     by
     cases y_in
     case head l =>
-    simp [getFresh]
-    rw [if_pos]
-    simp [Name.subscript]
-    apply lt_max
-    apply getFreshIsFresh_aux x l y 
+      simp [getFresh]
+      rw [if_pos]
+      simp [Name.subscript]
+      apply lt_max_right
+      apply Nat.lt_succ_of_le
+      apply Nat.le_refl
+      assumption
+    case tail z zs y_in =>
+      simp [getFresh]
+      have str_eq : Decidable (z.str = x.str) := instDecidableEqString z.str x.str
+      cases str_eq
+      case isTrue xz =>
+        rw [if_pos xz]
+        simp [Name.subscript]
+        apply lt_max_left
+        apply getFreshIsFresh_aux
+        apply y_in
+        apply str_eq
+      case isFalse xz =>
+        rw [if_neg xz]
+        apply getFreshIsFresh_aux
+        apply y_in
+        apply str_eq
 
 theorem List.get_map_aux (f : α → β) (a : α) : ∀ (n : Nat) (ctx : List α) (p : _), 
   ∃ q, (ctx.map f).get ⟨n, p⟩ = f (ctx.get ⟨n, q⟩)
@@ -138,39 +197,39 @@ def getDecidable (P : Prop) [Decidable P] : Decidable P :=
     then isTrue h
     else isFalse h
 
-theorem rename_aux_injective (dont_change : List Name) :
-  ∀ x y, rename_aux dont_change x = rename_aux dont_change y → x = y :=
-  λ x y h =>
-  by
-    simp [rename_aux] at h
-    match getDecidable (x ∈ dont_change), getDecidable (y ∈ dont_change) with
-    | isTrue x_in, isTrue y_in => 
-      rw [if_pos, if_pos] at h
-      exact h 
-      case hc => exact y_in
-      case hc => exact x_in 
-    | isTrue x_in, isFalse y_in => 
-      rw [if_pos, if_neg] at h
+-- theorem rename_aux_injective (dont_change : List Name) :
+--   ∀ x y, rename_aux dont_change x = rename_aux dont_change y → x = y :=
+--   λ x y h =>
+--   by
+--     simp [rename_aux] at h
+--     match getDecidable (x ∈ dont_change), getDecidable (y ∈ dont_change) with
+--     | isTrue x_in, isTrue y_in => 
+--       rw [if_pos, if_pos] at h
+--       exact h 
+--       case hc => exact y_in
+--       case hc => exact x_in 
+--     | isTrue x_in, isFalse y_in => 
+--       rw [if_pos, if_neg] at h
       
 
-    | isFalse x_in, isTrue y_in => _ 
-      rw [if_pos, if_pos] at h
-      exact h 
-    | isFalse x_in, isFalse y_in => _ 
-      rw [if_pos, if_pos] at h
-      exact h 
+--     | isFalse x_in, isTrue y_in => _ 
+--       rw [if_pos, if_pos] at h
+--       exact h 
+--     | isFalse x_in, isFalse y_in => _ 
+--       rw [if_pos, if_pos] at h
+--       exact h 
 
-def rename (f : Name → Name) (injective_f : ∀ x y, f x = f y → x = y) : Lambda ctx → Lambda (ctx.map f)
-  | Var name pos => Var (f name) (ctx.PosIn_map pos)
-  | App callee argument => App (rename f injective_f callee) (rename f injective_f argument)
-  | Abs name body p => Abs (f name) (rename f injective_f body) $
-    by
-    rw [List.mem_map_iff f (f name)]
-    intros h
-    apply p
-    have ⟨b, b_in_ctx, f_name_eq_f_b⟩ := h
-    rw [injective_f _ _ f_name_eq_f_b]
-    exact b_in_ctx
+-- def rename (f : Name → Name) (injective_f : ∀ x y, f x = f y → x = y) : Lambda ctx → Lambda (ctx.map f)
+--   | Var name pos => Var (f name) (ctx.PosIn_map pos)
+--   | App callee argument => App (rename f injective_f callee) (rename f injective_f argument)
+--   | Abs name body p => Abs (f name) (rename f injective_f body) $
+--     by
+--     rw [List.mem_map_iff f (f name)]
+--     intros h
+--     apply p
+--     have ⟨b, b_in_ctx, f_name_eq_f_b⟩ := h
+--     rw [injective_f _ _ f_name_eq_f_b]
+--     exact b_in_ctx
 
 
   
