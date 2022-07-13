@@ -1,5 +1,7 @@
 import Std
 import Lean
+import Mathlib.Init.Algebra.Order
+import Mathlib.Data.Nat.Basic
 
 open Std
 
@@ -21,6 +23,26 @@ def getFresh (name : Name) : Ctx → Name
       then ⟨name.str, max (getFresh name xs).subscript (x.subscript + 1)⟩
       else getFresh name xs
 
+-- the smallest number larger than every thing in the list
+def List.max' : List Nat → Nat
+  | [] => 0
+  | x :: xs => _root_.max (x + 1) xs.max'
+
+def getFreshSlow (name : Name) (ctx : Ctx) : Name :=
+  ⟨name.str, max name.subscript (((ctx.filter (λ x => x.str = name.str)).map Name.subscript).max')⟩
+
+theorem getFreshPreservesStr : ∀ ctx name, (getFresh name ctx).str = name.str
+  | [], (str, _) => by simp [Name.str, getFresh]
+  | (x_str, s_sub)::xs, (str, sub) =>
+    by
+    simp [Name.str, getFresh]
+    by_cases x_str = str
+    case pos =>
+      rw [if_pos h]
+    case neg =>
+      rw [if_neg h]
+      apply getFreshPreservesStr xs (str, sub)
+
 theorem max_zero : ∀ (x : Nat), max x 0 = x
   | 0 => by 
     simp [max]
@@ -28,6 +50,32 @@ theorem max_zero : ∀ (x : Nat), max x 0 = x
     simp [max]
     rw [if_pos]
     apply Nat.zero_lt_succ
+
+theorem Nat.le_eq_lt_or_eq (x y : Nat) : (x ≤ y) = (x < y ∨ x = y) :=
+  by
+  apply propext
+  apply Iff.intro
+  case a.mp =>
+    intro h
+    induction h
+    case refl => apply Or.inr rfl
+    case step y h ih =>
+      apply Or.inl
+      cases ih
+      case inl x_lt_y =>
+        apply Nat.lt_trans x_lt_y
+        apply Nat.lt_succ_self
+      case inr x_eq_y =>
+        cases x_eq_y
+        apply Nat.lt_succ_self
+  case a.mpr =>
+    intro h
+    cases h
+    case inl h =>
+      apply Nat.le_of_lt h
+    case inr h =>
+      rw [h]
+      apply Nat.le_refl
 
 theorem zero_max : ∀ (x : Nat), max 0 x = x
   | 0 => by 
@@ -73,9 +121,48 @@ theorem lt_max_right (x y z : Nat) (lt_right : x < z) : x < max y z :=
       simp [max]
       rw [if_neg h]
       exact lt_right
-        
+
+#check max_assoc
+
+theorem getFreshSpec : getFresh = getFreshSlow :=
+  by
+  funext name ctx
+  cases name with 
+  | mk str sub =>
+  induction ctx
+  case nil =>
+    simp [getFresh, getFreshSlow, List.max', Name.subscript]
+    rw [max_zero]
+  case cons x xs ih =>
+    cases x with | mk xstr xsub =>
+    simp [getFresh, getFreshSlow, List.max', Name.subscript, Name.str]
+    simp [List.max', List.map, List.filter]
+    by_cases (xstr = str)
+    case pos =>
+      have pos := h; clear h
+      simp [if_pos pos]
+      rw [decide_eq_true pos]
+      simp
+      rw [ih]
+      simp [getFresh, getFreshSlow, List.max', Name.subscript, Name.str]
+      have : ∀ a b c : Nat, max (max a b) c = max a (max c b) := 
+        by
+        intros a b c
+        rw [max_comm c b]
+        apply Eq.symm
+        rw [max_assoc]
+      apply this
+    case neg =>
+      have neg := h; clear h
+      simp [if_neg neg]
+      rw [decide_eq_false neg]
+      simp
+      rw [ih]
+      simp [getFresh, getFreshSlow, List.max', Name.subscript, Name.str]
+
 theorem getFreshIsFresh_aux x : 
-  ∀ (l : List Name) (y), y ∈ l → y.str = x.str → y.subscript < (getFresh x l).subscript :=
+  ∀ (l : List Name) (y) (y_in : y ∈ l) (str_eq : y.str = x.str), 
+    y.subscript < (getFresh x l).subscript :=
   λ l y y_in str_eq =>
     by
     cases y_in
@@ -103,6 +190,17 @@ theorem getFreshIsFresh_aux x :
         apply getFreshIsFresh_aux
         apply y_in
         apply str_eq
+
+theorem getFreshIsFresh x (zs : Ctx) y : y = getFresh x zs → y ∉ zs :=
+  by
+  intros y_eq y_in
+  have str_eq : y.str = x.str := 
+    by
+    rw [y_eq]
+    apply getFreshPreservesStr zs x
+  have : y.subscript < (getFresh x zs).subscript := getFreshIsFresh_aux x zs y y_in str_eq
+  rw [← y_eq] at this
+  apply lt_irrefl y.subscript this
 
 theorem List.get_map_aux (f : α → β) (a : α) : ∀ (n : Nat) (ctx : List α) (p : _), 
   ∃ q, (ctx.map f).get ⟨n, p⟩ = f (ctx.get ⟨n, q⟩)
@@ -185,52 +283,11 @@ theorem List.mem_map_iff (f : α → β) (a : β) (l : List α) : a ∈ l.map f 
         show a ∈ map f xs
         rw [xs_ih]
         exists b
-    
-def rename_aux (dont_change : List Name) : Name → Name
-  | name =>
-    if name ∈ dont_change
-      then name
-      else (getFresh name (name :: dont_change))
-
+        
 def getDecidable (P : Prop) [Decidable P] : Decidable P :=
   if h : P
     then isTrue h
     else isFalse h
-
--- theorem rename_aux_injective (dont_change : List Name) :
---   ∀ x y, rename_aux dont_change x = rename_aux dont_change y → x = y :=
---   λ x y h =>
---   by
---     simp [rename_aux] at h
---     match getDecidable (x ∈ dont_change), getDecidable (y ∈ dont_change) with
---     | isTrue x_in, isTrue y_in => 
---       rw [if_pos, if_pos] at h
---       exact h 
---       case hc => exact y_in
---       case hc => exact x_in 
---     | isTrue x_in, isFalse y_in => 
---       rw [if_pos, if_neg] at h
-      
-
---     | isFalse x_in, isTrue y_in => _ 
---       rw [if_pos, if_pos] at h
---       exact h 
---     | isFalse x_in, isFalse y_in => _ 
---       rw [if_pos, if_pos] at h
---       exact h 
-
--- def rename (f : Name → Name) (injective_f : ∀ x y, f x = f y → x = y) : Lambda ctx → Lambda (ctx.map f)
---   | Var name pos => Var (f name) (ctx.PosIn_map pos)
---   | App callee argument => App (rename f injective_f callee) (rename f injective_f argument)
---   | Abs name body p => Abs (f name) (rename f injective_f body) $
---     by
---     rw [List.mem_map_iff f (f name)]
---     intros h
---     apply p
---     have ⟨b, b_in_ctx, f_name_eq_f_b⟩ := h
---     rw [injective_f _ _ f_name_eq_f_b]
---     exact b_in_ctx
-
 
   
 

@@ -13,3 +13,5 @@ lean_lib Lambda {
 lean_exe lambda {
   root := `Main
 }
+
+require mathlib from "../mathlib4"
